@@ -5,16 +5,16 @@ use quote::quote;
 use std::collections::HashSet;
 use syn::{Data, DeriveInput, Error, Fields, Result, Type};
 
-pub fn generate(union_args: &args::Interface, input: &DeriveInput) -> Result<TokenStream> {
+pub fn generate(union_args: &args::Union) -> Result<TokenStream> {
     let crate_name = get_crate_name(union_args.internal);
-    let ident = &input.ident;
-    let generics = &input.generics;
+    let ident = &union_args.ident;
+    let generics = &union_args.generics;
     let s = match &input.data {
         Data::Enum(s) => s,
         _ => {
             return Err(Error::new_spanned(
                 input,
-                "Unions can only be applied to an enum.",
+                "Union can only be applied to an enum.",
             ))
         }
     };

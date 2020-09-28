@@ -2,23 +2,24 @@ use crate::args;
 use crate::args::{InterfaceField, InterfaceFieldArgument};
 use crate::output_type::OutputType;
 use crate::utils::{get_crate_name, get_rustdoc};
+use darling::ast::Data;
 use inflector::Inflector;
 use proc_macro::TokenStream;
 use proc_macro2::{Ident, Span};
 use quote::quote;
 use std::collections::HashSet;
-use syn::{Data, DeriveInput, Error, Fields, Result, Type};
+use syn::{DeriveInput, Error, Fields, Result, Type};
 
-pub fn generate(interface_args: &args::Interface, input: &DeriveInput) -> Result<TokenStream> {
+pub fn generate(interface_args: &args::Interface) -> Result<TokenStream> {
     let crate_name = get_crate_name(interface_args.internal);
-    let ident = &input.ident;
-    let generics = &input.generics;
-    let s = match &input.data {
+    let ident = &interface_args.ident;
+    let generics = &interface_args.generics;
+    let s = match &interface_args.data {
         Data::Enum(s) => s,
         _ => {
             return Err(Error::new_spanned(
-                input,
-                "Interfaces can only be applied to an enum.",
+                ident,
+                "Interface can only be applied to an enum.",
             ))
         }
     };
@@ -31,10 +32,7 @@ pub fn generate(interface_args: &args::Interface, input: &DeriveInput) -> Result
         .clone()
         .unwrap_or_else(|| ident.to_string());
 
-    let desc = interface_args
-        .desc
-        .clone()
-        .or_else(|| get_rustdoc(&input.attrs).ok().flatten())
+    let desc = get_rustdoc(&interface_args.attrs)?
         .map(|s| quote! { Some(#s) })
         .unwrap_or_else(|| quote! {None});
 

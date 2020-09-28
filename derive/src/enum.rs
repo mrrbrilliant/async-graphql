@@ -1,25 +1,28 @@
 use crate::args;
 use crate::utils::{get_crate_name, get_rustdoc};
+use darling::ast::Data;
 use inflector::Inflector;
 use proc_macro::TokenStream;
 use quote::quote;
 use syn::ext::IdentExt;
-use syn::{Data, DeriveInput, Error, Result};
+use syn::{DeriveInput, Error, Result};
 
-pub fn generate(enum_args: &args::Enum, input: &DeriveInput) -> Result<TokenStream> {
+pub fn generate(enum_args: &args::Enum) -> Result<TokenStream> {
     let crate_name = get_crate_name(enum_args.internal);
-    let ident = &input.ident;
-    let e = match &input.data {
+    let ident = &enum_args.ident;
+    let e = match &enum_args.data {
         Data::Enum(e) => e,
-        _ => return Err(Error::new_spanned(input, "It should be a enum")),
+        _ => {
+            return Err(Error::new_spanned(
+                ident,
+                "Enum can only be applied to an enum.",
+            ))
+        }
     };
 
     let gql_typename = enum_args.name.clone().unwrap_or_else(|| ident.to_string());
 
-    let desc = enum_args
-        .desc
-        .clone()
-        .or_else(|| get_rustdoc(&input.attrs).ok().flatten())
+    let desc = get_rustdoc(&enum_args.attrs)
         .map(|s| quote! { Some(#s) })
         .unwrap_or_else(|| quote! {None});
 

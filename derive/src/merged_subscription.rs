@@ -22,7 +22,12 @@ pub fn generate(object_args: &args::Object, input: &DeriveInput) -> Result<Token
 
     let s = match &input.data {
         Data::Struct(e) => e,
-        _ => return Err(Error::new_spanned(input, "It should be a struct")),
+        _ => {
+            return Err(Error::new_spanned(
+                input,
+                "MergedSubscription can only be applied to an struct.",
+            ))
+        }
     };
 
     let mut types = Vec::new();

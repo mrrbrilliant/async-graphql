@@ -2,7 +2,9 @@ use itertools::Itertools;
 use proc_macro2::{Span, TokenStream, TokenTree};
 use proc_macro_crate::crate_name;
 use quote::quote;
-use syn::{Attribute, DeriveInput, Error, Expr, Ident, Lit, Meta, MetaList, NestedMeta, Result};
+use syn::{
+    Attribute, DeriveInput, Error, Expr, Ident, Lit, LitStr, Meta, MetaList, NestedMeta, Result,
+};
 
 pub fn get_crate_name(internal: bool) -> TokenStream {
     if internal {
@@ -10,22 +12,6 @@ pub fn get_crate_name(internal: bool) -> TokenStream {
     } else {
         let name = crate_name("async-graphql").unwrap_or_else(|_| "async_graphql".to_owned());
         TokenTree::from(Ident::new(&name, Span::call_site())).into()
-    }
-}
-
-pub fn parse_derive(input: TokenStream) -> Result<(proc_macro::TokenStream, DeriveInput)> {
-    let mut input: DeriveInput = syn::parse2(input)?;
-    let attrs = &mut input.attrs;
-    let graphql_attr = attrs
-        .iter()
-        .find_position(|attr| attr.path.is_ident("graphql"));
-
-    if let Some((pos, _attr)) = graphql_attr {
-        let attribute = attrs.remove(pos);
-        let args = attribute.parse_args::<TokenStream>()?;
-        Ok((args.into(), input))
-    } else {
-        Ok((TokenStream::new().into(), input))
     }
 }
 
@@ -39,7 +25,7 @@ fn generate_nested_validator(
             if ls.path.is_ident("and") {
                 let mut validators = Vec::new();
                 for nested_meta in &ls.nested {
-                    validators.push(parse_nested_validator(crate_name, nested_meta)?);
+                    validators.push(generate_nested_validator(crate_name, nested_meta)?);
                 }
                 Ok(validators
                     .into_iter()
@@ -51,7 +37,7 @@ fn generate_nested_validator(
             } else if ls.path.is_ident("or") {
                 let mut validators = Vec::new();
                 for nested_meta in &ls.nested {
-                    validators.push(parse_nested_validator(crate_name, nested_meta)?);
+                    validators.push(generate_nested_validator(crate_name, nested_meta)?);
                 }
                 Ok(validators
                     .into_iter()
@@ -91,18 +77,26 @@ fn generate_nested_validator(
     }
 }
 
-pub fn generate_validator(crate_name: &TokenStream, args: &MetaList) -> Result<TokenStream> {
-    if args.len() > 1 {
-        return Err(Error::new_spanned(ls, "Only one validator can be defined. You can connect combine validators with `and` or `or`"));
+pub fn generate_validator(
+    crate_name: &TokenStream,
+    args: Option<&MetaList>,
+) -> Result<TokenStream> {
+    match args {
+        Some(args) => {
+            if args.len() > 1 {
+                return Err(Error::new_spanned(args, "Only one validator can be defined. You can connect combine validators with `and` or `or`"));
+            }
+            if args.is_empty() {
+                return Err(Error::new_spanned(
+                    args,
+                    "At least one validator must be defined",
+                ));
+            }
+            let validator = generate_nested_validator(crate_name, &args[0])?;
+            Ok(quote! { Some(::std::sync::Arc::new(#validator)) })
+        }
+        None => Ok(quote! { None }),
     }
-    if args.is_empty() {
-        return Err(Error::new_spanned(
-            ls,
-            "At least one validator must be defined",
-        ));
-    }
-    let validator = generate_nested_validator(crate_name, &args[0])?;
-    Ok(quote! { Some(::std::sync::Arc::new(#validator)) })
 }
 
 pub fn generate_guards(crate_name: &TokenStream, args: &MetaList) -> Result<Option<TokenStream>> {
@@ -231,7 +225,7 @@ pub fn get_rustdoc(attrs: &[Attribute]) -> Result<Option<String>> {
     })
 }
 
-pub fn generate_default_value(lit: &Lit) -> Result<TokenStream> {
+fn generate_default_value(lit: &Lit) -> Result<TokenStream> {
     match lit {
         Lit::Str(value) =>{
             let value = value.value();
@@ -256,16 +250,27 @@ pub fn generate_default_value(lit: &Lit) -> Result<TokenStream> {
     }
 }
 
-pub fn generate_default_with(lit: &Lit) -> Result<TokenStream> {
-    if let Lit::Str(str) = lit {
-        let str = str.value();
-        let tokens: TokenStream = str.parse()?;
-        Ok(quote! { (#tokens) })
+fn generate_default_with(lit: &LitStr) -> Result<TokenStream> {
+    let str = lit.value();
+    let tokens: TokenStream = str.parse()?;
+    Ok(quote! { (#tokens) })
+}
+
+pub fn generate_default(
+    default: bool,
+    default_value: Option<&Lit>,
+    default_with: Option<&LitStr>,
+) -> Result<Option<TokenStream>> {
+    if let Some(lit) = default_with {
+        Ok(Some(generate_default_with(lit)?))
+    } else if let Some(lit) = default_value {
+        Ok(Some(generate_default_value(lit)?))
     } else {
-        Err(Error::new_spanned(
-            &lit,
-            "Attribute 'default' should be a string.",
-        ))
+        if default {
+            Ok(Some(quote! { Default::default() }))
+        } else {
+            Ok(None)
+        }
     }
 }
 

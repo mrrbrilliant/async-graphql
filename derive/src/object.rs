@@ -1,6 +1,9 @@
 use crate::args;
 use crate::output_type::OutputType;
-use crate::utils::{get_cfg_attrs, get_crate_name, get_param_getter_ident, get_rustdoc};
+use crate::utils::{
+    generate_guards, generate_post_guards, get_cfg_attrs, get_crate_name, get_param_getter_ident,
+    get_rustdoc,
+};
 use inflector::Inflector;
 use proc_macro::TokenStream;
 use quote::quote;
@@ -44,7 +47,9 @@ pub fn generate(object_args: &args::Object, item_impl: &mut ItemImpl) -> Result<
 
     for item in &mut item_impl.items {
         if let ImplItem::Method(method) = item {
-            if args::Entity::parse(&crate_name, &method.attrs)?.is_some() {
+            let method_args = args::ObjectFieldWrapper::from_list(&method.attrs)?.graphql;
+
+            if method_args.entity {
                 let cfg_attrs = get_cfg_attrs(&method.attrs);
 
                 if method.sig.asyncness.is_none() {
@@ -204,31 +209,29 @@ pub fn generate(object_args: &args::Object, item_impl: &mut ItemImpl) -> Result<
                         .map(|(idx, _)| idx)
                         .unwrap(),
                 );
-            } else if let Some(field) = args::Field::parse(&crate_name, &method.attrs)? {
+            } else if !method_args.skip {
                 if method.sig.asyncness.is_none() {
                     return Err(Error::new_spanned(&method, "Must be asynchronous"));
                 }
 
-                let field_name = field
+                let field_name = method_args
                     .name
                     .clone()
                     .unwrap_or_else(|| method.sig.ident.unraw().to_string().to_camel_case());
-                let field_desc = field
-                    .desc
-                    .as_ref()
-                    .map(|s| quote! {Some(#s)})
+                let field_desc = get_rustdoc(&method_args.attrs)?
+                    .map(|s| quote! { Some(#s) })
                     .unwrap_or_else(|| quote! {None});
-                let field_deprecation = field
+                let field_deprecation = method_args
                     .deprecation
                     .as_ref()
                     .map(|s| quote! {Some(#s)})
                     .unwrap_or_else(|| quote! {None});
-                let external = field.external;
-                let requires = match &field.requires {
+                let external = method_args.external;
+                let requires = match &method_args.requires {
                     Some(requires) => quote! { Some(#requires) },
                     None => quote! { None },
                 };
-                let provides = match &field.provides {
+                let provides = match &method_args.provides {
                     Some(provides) => quote! { Some(#provides) },
                     None => quote! { None },
                 };
@@ -239,8 +242,8 @@ pub fn generate(object_args: &args::Object, item_impl: &mut ItemImpl) -> Result<
                     }
                 };
                 let cache_control = {
-                    let public = field.cache_control.public;
-                    let max_age = field.cache_control.max_age;
+                    let public = method_args.cache_control.public;
+                    let max_age = method_args.cache_control.max_age;
                     quote! {
                         #crate_name::CacheControl {
                             public: #public,
@@ -401,14 +404,23 @@ pub fn generate(object_args: &args::Object, item_impl: &mut ItemImpl) -> Result<
                     }
                 };
 
-                let guard = field
-                    .guard
+                let guard = match &method_args.guard {
+                    Some(meta_list) => generate_guards(crate_name, meta_list)?,
+                    None => None,
+                };
+
+                let guard = guard
                     .map(|guard| quote! {
                         #guard.check(ctx).await
                             .map_err(|err| err.into_error_with_path(ctx.item.pos, ctx.path_node.as_ref()))?;
                     });
-                let post_guard = field
-                    .post_guard
+
+                let post_guard = match &method_args.post_guard {
+                    Some(meta_list) => generate_post_guards(crate_name, meta_list)?,
+                    None => None,
+                };
+
+                let post_guard = post_guard
                     .map(|guard| quote! {
                         #guard.check(ctx, &res).await
                             .map_err(|err| err.into_error_with_path(ctx.item.pos, ctx.path_node.as_ref()))?;
