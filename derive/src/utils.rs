@@ -29,7 +29,7 @@ pub fn parse_derive(input: TokenStream) -> Result<(proc_macro::TokenStream, Deri
     }
 }
 
-fn parse_nested_validator(
+fn generate_nested_validator(
     crate_name: &TokenStream,
     nested_meta: &NestedMeta,
 ) -> Result<TokenStream> {
@@ -91,29 +91,21 @@ fn parse_nested_validator(
     }
 }
 
-pub fn parse_validator(crate_name: &TokenStream, args: &MetaList) -> Result<TokenStream> {
-    for arg in &args.nested {
-        if let NestedMeta::Meta(Meta::List(ls)) = arg {
-            if ls.path.is_ident("validator") {
-                if ls.nested.len() > 1 {
-                    return Err(Error::new_spanned(ls,
-                                                  "Only one validator can be defined. You can connect combine validators with `and` or `or`"));
-                }
-                if ls.nested.is_empty() {
-                    return Err(Error::new_spanned(
-                        ls,
-                        "At least one validator must be defined",
-                    ));
-                }
-                let validator = parse_nested_validator(crate_name, &ls.nested[0])?;
-                return Ok(quote! { Some(::std::sync::Arc::new(#validator)) });
-            }
-        }
+pub fn generate_validator(crate_name: &TokenStream, args: &MetaList) -> Result<TokenStream> {
+    if args.len() > 1 {
+        return Err(Error::new_spanned(ls, "Only one validator can be defined. You can connect combine validators with `and` or `or`"));
     }
-    Ok(quote! {None})
+    if args.is_empty() {
+        return Err(Error::new_spanned(
+            ls,
+            "At least one validator must be defined",
+        ));
+    }
+    let validator = generate_nested_validator(crate_name, &args[0])?;
+    Ok(quote! { Some(::std::sync::Arc::new(#validator)) })
 }
 
-pub fn parse_guards(crate_name: &TokenStream, args: &MetaList) -> Result<Option<TokenStream>> {
+pub fn generate_guards(crate_name: &TokenStream, args: &MetaList) -> Result<Option<TokenStream>> {
     for arg in &args.nested {
         if let NestedMeta::Meta(Meta::List(ls)) = arg {
             if ls.path.is_ident("guard") {
@@ -162,7 +154,10 @@ pub fn parse_guards(crate_name: &TokenStream, args: &MetaList) -> Result<Option<
     Ok(None)
 }
 
-pub fn parse_post_guards(crate_name: &TokenStream, args: &MetaList) -> Result<Option<TokenStream>> {
+pub fn generate_post_guards(
+    crate_name: &TokenStream,
+    args: &MetaList,
+) -> Result<Option<TokenStream>> {
     for arg in &args.nested {
         if let NestedMeta::Meta(Meta::List(ls)) = arg {
             if ls.path.is_ident("post_guard") {
@@ -236,7 +231,7 @@ pub fn get_rustdoc(attrs: &[Attribute]) -> Result<Option<String>> {
     })
 }
 
-pub fn parse_default(lit: &Lit) -> Result<TokenStream> {
+pub fn generate_default_value(lit: &Lit) -> Result<TokenStream> {
     match lit {
         Lit::Str(value) =>{
             let value = value.value();
@@ -261,7 +256,7 @@ pub fn parse_default(lit: &Lit) -> Result<TokenStream> {
     }
 }
 
-pub fn parse_default_with(lit: &Lit) -> Result<TokenStream> {
+pub fn generate_default_with(lit: &Lit) -> Result<TokenStream> {
     if let Lit::Str(str) = lit {
         let str = str.value();
         let tokens: TokenStream = str.parse()?;

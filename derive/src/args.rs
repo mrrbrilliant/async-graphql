@@ -1,7 +1,4 @@
-use crate::utils::{
-    get_rustdoc, parse_default, parse_default_with, parse_guards, parse_post_guards,
-    parse_validator,
-};
+use crate::utils::{get_rustdoc, parse_default, parse_default_with};
 use proc_macro2::TokenStream;
 use quote::quote;
 use syn::{Attribute, AttributeArgs, Error, Lit, Meta, MetaList, NestedMeta, Result, Type};
@@ -128,17 +125,21 @@ impl Object {
 pub struct Argument {
     pub name: Option<String>,
     pub desc: Option<String>,
-    pub default: Option<TokenStream>,
-    pub validator: TokenStream,
+    pub default: bool,
+    pub default_value: Option<Lit>,
+    pub default_with: Option<LitStr>,
+    pub validator: Option<MetaList>,
     pub key: bool, // for entity
 }
 
 impl Argument {
-    pub fn parse(crate_name: &TokenStream, attrs: &[Attribute]) -> Result<Self> {
+    pub fn parse(attrs: &[Attribute]) -> Result<Self> {
         let mut name = None;
         let mut desc = None;
-        let mut default = None;
-        let mut validator = quote! { None };
+        let mut default = false;
+        let mut default_value = None;
+        let mut default_with = None;
+        let mut validator = None;
         let mut key = false;
 
         for attr in attrs {
@@ -147,7 +148,7 @@ impl Argument {
                     for meta in &ls.nested {
                         if let NestedMeta::Meta(Meta::Path(p)) = meta {
                             if p.is_ident("default") {
-                                default = Some(quote! { Default::default() });
+                                default = true;
                             } else if p.is_ident("key") {
                                 key = true;
                             }
@@ -170,15 +171,15 @@ impl Argument {
                                         "Attribute 'desc' should be a string.",
                                     ));
                                 }
-                            } else if nv.path.is_ident("default") {
-                                default = Some(parse_default(&nv.lit)?);
+                            } else if nv.path.is_ident("default_value") {
+                                default_value = Some(nv.lit.clone());
                             } else if nv.path.is_ident("default_with") {
-                                default = Some(parse_default_with(&nv.lit)?);
+                                default_with = Some(parse_default_with(&nv.lit)?);
                             }
                         }
                     }
 
-                    validator = parse_validator(crate_name, &ls)?;
+                    validator = Some(ls);
                 }
                 _ => {}
             }
@@ -188,6 +189,8 @@ impl Argument {
             name,
             desc,
             default,
+            default_value,
+            default_with,
             validator,
             key,
         })
@@ -203,12 +206,12 @@ pub struct Field {
     pub provides: Option<String>,
     pub requires: Option<String>,
     pub owned: bool,
-    pub guard: Option<TokenStream>,
-    pub post_guard: Option<TokenStream>,
+    pub guard: Option<MetaList>,
+    pub post_guard: Option<MetaList>,
 }
 
 impl Field {
-    pub fn parse(crate_name: &TokenStream, attrs: &[Attribute]) -> Result<Option<Self>> {
+    pub fn parse(attrs: &[Attribute]) -> Result<Option<Self>> {
         let mut name = None;
         let mut desc = None;
         let mut deprecation = None;
@@ -476,16 +479,20 @@ impl UnionItem {
 pub struct InputField {
     pub name: Option<String>,
     pub desc: Option<String>,
-    pub default: Option<TokenStream>,
-    pub validator: TokenStream,
+    pub default: bool,
+    pub default_value: Option<Lit>,
+    pub default_with: Option<LitStr>,
+    pub validator: Option<MetaList>,
     pub flatten: bool,
 }
 
 impl InputField {
-    pub fn parse(crate_name: &TokenStream, attrs: &[Attribute]) -> Result<Self> {
+    pub fn parse(attrs: &[Attribute]) -> Result<Self> {
         let mut name = None;
         let mut desc = None;
-        let mut default = None;
+        let mut default = false;
+        let mut default_value = None;
+        let mut default_with = None;
         let mut validator = quote! { None };
         let mut flatten = false;
 
@@ -501,7 +508,7 @@ impl InputField {
                                 ));
                             }
                             NestedMeta::Meta(Meta::Path(p)) if p.is_ident("default") => {
-                                default = Some(quote! { Default::default() });
+                                default = true;
                             }
                             NestedMeta::Meta(Meta::Path(p)) if p.is_ident("flatten") => {
                                 flatten = true;
@@ -525,10 +532,10 @@ impl InputField {
                                             "Attribute 'desc' should be a string.",
                                         ));
                                     }
-                                } else if nv.path.is_ident("default") {
-                                    default = Some(parse_default(&nv.lit)?);
+                                } else if nv.path.is_ident("default_value") {
+                                    default_value = Some(nv.lit.clone());
                                 } else if nv.path.is_ident("default_with") {
-                                    default = Some(parse_default_with(&nv.lit)?);
+                                    default_with = Some(nv.lit.clone());
                                 }
                             }
                             _ => {}
@@ -548,6 +555,8 @@ impl InputField {
             name,
             desc,
             default,
+            default_value,
+            default_with,
             validator,
             flatten,
         })
@@ -608,7 +617,7 @@ pub struct InterfaceFieldArgument {
     pub name: String,
     pub desc: Option<String>,
     pub ty: Type,
-    pub default: Option<TokenStream>,
+    pub default: Option<MetaList>,
 }
 
 impl InterfaceFieldArgument {
@@ -925,7 +934,7 @@ impl Scalar {
 pub struct Entity {}
 
 impl Entity {
-    pub fn parse(_crate_name: &TokenStream, attrs: &[Attribute]) -> Result<Option<Self>> {
+    pub fn parse(attrs: &[Attribute]) -> Result<Option<Self>> {
         for attr in attrs {
             match attr.parse_meta()? {
                 Meta::List(ls) if ls.path.is_ident("entity") => {
